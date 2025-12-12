@@ -1,0 +1,125 @@
+name: 🧪 CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test and Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run go fmt
+        run: go fmt ./...
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run go mod tidy check
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum || (echo "::error::go.mod or go.sum changed. Run 'go mod tidy' and commit the changes." && exit 1)
+
+      - name: Run tests
+        run: go test -v -short ./...
+
+      - name: Run tests with race detector
+        run: go test -race -short ./...
+
+      - name: Generate coverage report
+        run: go test -coverprofile=coverage.txt -covermode=atomic ./...
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.txt
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+      - name: Build
+        run: go build -trimpath -o ykgpg ./cmd/ykgpg
+
+      - name: Build for multiple platforms
+        run: |
+          GOOS=linux GOARCH=amd64 go build -trimpath -o bin/ykgpg-linux-amd64 ./cmd/ykgpg
+          GOOS=darwin GOARCH=amd64 go build -trimpath -o bin/ykgpg-darwin-amd64 ./cmd/ykgpg
+          GOOS=darwin GOARCH=arm64 go build -trimpath -o bin/ykgpg-darwin-arm64 ./cmd/ykgpg
+          GOOS=windows GOARCH=amd64 go build -trimpath -o bin/ykgpg-windows-amd64.exe ./cmd/ykgpg
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: binaries
+          path: bin/*
+          retention-days: 1
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: latest
+          args: --timeout=5m --out-format=colored-line-number
+
+  pre-commit:
+    name: Pre-commit checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      - name: Run pre-commit
+        run: pre-commit run --all-files

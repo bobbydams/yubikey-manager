@@ -1,0 +1,13 @@
+# YubiKey GPG Manager Configuration
+# Copy this file to ~/.config/ykgpg/config.yaml and update with your values
+
+primary_key_id: "YOUR_KEY_ID_HERE"
+primary_key_fingerprint: "YOUR_FULL_FINGERPRINT_HERE"
+user_name: "Your Name"
+user_email: "your.email@example.com"
+keyserver: "hkps://keys.openpgp.org"
+
+# Optional - can be set via environment variable or CLI flag
+# master_key_path: "/path/to/master/key.asc"
+# backup_dir: "~/.gnupg/backups"
+# no_color: false  # Set to true to disable colored output

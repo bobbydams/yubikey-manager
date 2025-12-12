@@ -1,0 +1,203 @@
+name: 🚀 Release YubiKey GPG Manager
+
+run-name: 🚀 Release YubiKey GPG Manager v${{ github.event.inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semantic version to release (e.g., 1.2.3 or 1.2.3-rc.1)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.event.inputs.version || 'manual' }}
+  cancel-in-progress: true
+
+env:
+  VERSION: ${{ github.event.inputs.version }}
+
+jobs:
+  preflight:
+    name: Preflight checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version input
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          # POSIX ERE-compatible SemVer v2.0.0 regex (no non-capturing groups)
+          SEMVER_REGEX='^(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9A-Za-z-][0-9A-Za-z-]*)([.](0|[1-9][0-9]*|[0-9A-Za-z-][0-9A-Za-z-]*))*))?([+]([0-9A-Za-z-]+([.][0-9A-Za-z-]+)*))?$'
+          if [[ ! "${VERSION}" =~ $SEMVER_REGEX ]]; then
+            echo "::error::Input version '${VERSION}' is not valid SemVer (MAJOR.MINOR.PATCH with optional -prerelease and +build)." >&2
+            exit 1
+          fi
+          echo "✓ Version format is valid: ${VERSION}"
+
+      - name: Ensure tag does not already exist
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          git fetch --tags --force
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::Tag ${TAG} already exists. Choose a new version." >&2
+            exit 1
+          fi
+          echo "✓ Tag ${TAG} does not exist"
+
+  build-and-release:
+    name: Build and Release
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test -v -short ./...
+
+      - name: Build binaries
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          mkdir -p dist
+
+          # Build for multiple platforms
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-X main.version=${VERSION}" -o dist/ykgpg-linux-amd64 ./cmd/ykgpg
+          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-X main.version=${VERSION}" -o dist/ykgpg-linux-arm64 ./cmd/ykgpg
+          GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-X main.version=${VERSION}" -o dist/ykgpg-darwin-amd64 ./cmd/ykgpg
+          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-X main.version=${VERSION}" -o dist/ykgpg-darwin-arm64 ./cmd/ykgpg
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-X main.version=${VERSION}" -o dist/ykgpg-windows-amd64.exe ./cmd/ykgpg
+
+          # Create checksums
+          cd dist
+          sha256sum ykgpg-* > checksums.txt
+          cd ..
+
+      - name: Create tag
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
+
+      - name: Generate release notes
+        id: release-notes
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          if [[ -n "$PREV_TAG" ]]; then
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" ${PREV_TAG}..HEAD)
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" --reverse | head -20)
+          fi
+
+          cat > /tmp/release-notes.md <<EOF
+          # Release ${TAG}
+
+          ## Installation
+
+          Download the binary for your platform:
+
+          - **Linux (amd64)**: [ykgpg-linux-amd64](https://github.com/${{ github.repository }}/releases/download/${TAG}/ykgpg-linux-amd64)
+          - **Linux (arm64)**: [ykgpg-linux-arm64](https://github.com/${{ github.repository }}/releases/download/${TAG}/ykgpg-linux-arm64)
+          - **macOS (amd64)**: [ykgpg-darwin-amd64](https://github.com/${{ github.repository }}/releases/download/${TAG}/ykgpg-darwin-amd64)
+          - **macOS (arm64)**: [ykgpg-darwin-arm64](https://github.com/${{ github.repository }}/releases/download/${TAG}/ykgpg-darwin-arm64)
+          - **Windows (amd64)**: [ykgpg-windows-amd64.exe](https://github.com/${{ github.repository }}/releases/download/${TAG}/ykgpg-windows-amd64.exe)
+
+          ### Usage
+
+          After downloading, make the binary executable (Unix/macOS):
+          \`\`\`bash
+          chmod +x ykgpg-*
+          \`\`\`
+
+          Then move it to your PATH, for example:
+          \`\`\`bash
+          sudo mv ykgpg-* /usr/local/bin/ykgpg
+          \`\`\`
+
+          ## Checksums
+
+          See [checksums.txt](https://github.com/${{ github.repository }}/releases/download/${TAG}/checksums.txt) for SHA256 checksums.
+
+          ## Changes
+
+          ${CHANGELOG}
+          EOF
+
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          cat /tmp/release-notes.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: Release v${{ github.event.inputs.version }}
+          body: ${{ steps.release-notes.outputs.notes }}
+          files: |
+            dist/*
+          draft: false
+          prerelease: ${{ contains(github.event.inputs.version, '-') }}
+
+      - name: Output release info
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          echo "## 🚀 Release v${{ github.event.inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**GitHub Release:** [v${{ github.event.inputs.version }}](https://github.com/${{ github.repository }}/releases/tag/v${{ github.event.inputs.version }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Download Binaries" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Linux (amd64)**: [ykgpg-linux-amd64](https://github.com/${{ github.repository }}/releases/download/v${{ github.event.inputs.version }}/ykgpg-linux-amd64)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Linux (arm64)**: [ykgpg-linux-arm64](https://github.com/${{ github.repository }}/releases/download/v${{ github.event.inputs.version }}/ykgpg-linux-arm64)" >> $GITHUB_STEP_SUMMARY
+          echo "- **macOS (amd64)**: [ykgpg-darwin-amd64](https://github.com/${{ github.repository }}/releases/download/v${{ github.event.inputs.version }}/ykgpg-darwin-amd64)" >> $GITHUB_STEP_SUMMARY
+          echo "- **macOS (arm64)**: [ykgpg-darwin-arm64](https://github.com/${{ github.repository }}/releases/download/v${{ github.event.inputs.version }}/ykgpg-darwin-arm64)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Windows (amd64)**: [ykgpg-windows-amd64.exe](https://github.com/${{ github.repository }}/releases/download/v${{ github.event.inputs.version }}/ykgpg-windows-amd64.exe)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Checksums" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "See [checksums.txt](https://github.com/${{ github.repository }}/releases/download/v${{ github.event.inputs.version }}/checksums.txt) for SHA256 checksums." >> $GITHUB_STEP_SUMMARY
