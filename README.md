@@ -1,7 +1,7 @@
 # YubiKey GPG Manager
 
 [![CI](https://github.com/bobbydams/yubikey-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/bobbydams/yubikey-manager/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/github/bobbydams/yubikey-manager/graph/badge.svg?token=CWCHT0ITHM)](https://codecov.io/github/bobbydams/yubikey-manager)
+[![codecov](https://codecov.io/github/bobbydams/yubikey-manager/graph/badge.svg?token=3CRAXf35hS)](https://codecov.io/github/bobbydams/yubikey-manager)
 [![Go Report Card](https://goreportcard.com/badge/github.com/bobbydams/yubikey-manager)](https://goreportcard.com/report/github.com/bobbydams/yubikey-manager)
 [![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
