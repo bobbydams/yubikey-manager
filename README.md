@@ -213,8 +213,10 @@ Checks that your GPG and YubiKey setup is correct, including:
 | Command        | Description                                            |
 | -------------- | ------------------------------------------------------ |
 | `status`       | Show current key and YubiKey status                    |
+| `init`         | Initialize a new YubiKey (PINs, key algorithms)        |
 | `setup`        | Add a signing subkey to a new YubiKey (interactive)    |
 | `setup-batch`  | Add a signing subkey to a new YubiKey (semi-automated) |
+| `move-subkey`  | Move an existing signing subkey to a YubiKey           |
 | `revoke`       | Revoke a subkey (for lost/compromised YubiKeys)        |
 | `extend`       | Extend expiration dates on keys                        |
 | `cleanup`      | Remove old/expired keys from keyring                   |
@@ -223,6 +225,107 @@ Checks that your GPG and YubiKey setup is correct, including:
 | `verify`       | Verify GPG and YubiKey setup                           |
 | `config init`  | Interactively generate configuration file              |
 | `config show`  | Show current configuration values                      |
+
+## Troubleshooting
+
+### PIN Issues
+
+**YubiKey has TWO separate PINs for OpenPGP:**
+| PIN Type | Default | Min Length | Used For |
+|----------|---------|------------|----------|
+| User PIN | 123456 | 6 chars | Signing, decrypting |
+| Admin PIN | 12345678 | 8 chars | Card management, moving keys |
+
+**Important:** These are NOT the same as YubiKey Authenticator or FIDO2 PINs!
+
+**To change PINs:**
+```bash
+gpg --card-edit
+gpg/card> admin
+gpg/card> passwd
+# Select (1) for User PIN, (3) for Admin PIN
+# Enter CURRENT pin first, then NEW pin
+```
+
+**If PIN is locked** (retry counter = 0):
+```bash
+gpg --card-edit
+gpg/card> admin
+gpg/card> passwd
+# Select (1) change PIN
+# Enter Admin PIN to unlock and set new User PIN
+```
+
+### Pinentry Issues
+
+If PIN prompts don't appear or hang, switch to terminal-based pinentry:
+```bash
+# Add to ~/.gnupg/gpg-agent.conf:
+pinentry-program /opt/homebrew/bin/pinentry-curses
+
+# Then restart agent:
+gpgconf --kill gpg-agent
+export GPG_TTY=$(tty)
+```
+
+### Key Type Mismatch (RSA vs ECC)
+
+If `keytocard` silently fails and `save` says "Key not changed":
+```bash
+gpg --card-status | grep "Key attributes"
+```
+
+If it shows `rsa2048` but your key is `ed25519`, configure the card first:
+```bash
+gpg --card-edit
+gpg/card> admin
+gpg/card> key-attr
+# Select (2) ECC, then (1) Curve 25519 for each slot
+```
+
+### Lost Key After Factory Reset
+
+**Symptoms:** `gpg --list-secret-keys` shows `ssb#` (# = no secret key available)
+
+**Cause:** `keytocard` MOVES keys (doesn't copy). If you factory reset the card without a backup, the key is lost.
+
+**Prevention:** Always backup AFTER creating new subkeys:
+```bash
+gpg --export-secret-keys YOUR_KEY_ID > master-key-backup.gpg
+```
+
+**Recovery:** If you have a backup:
+```bash
+gpg --import /path/to/master-key-backup.gpg
+```
+
+**If no backup exists:** Create a new subkey:
+```bash
+gpg --edit-key YOUR_KEY_ID
+gpg> addkey
+# Select (10) ECC (sign only), (1) Curve 25519, set expiration
+gpg> save
+```
+
+### Key Stub Issues
+
+After factory reset, GPG may still think keys are on the card. To clear:
+```bash
+# Delete the orphaned stub
+gpg --delete-secret-keys SUBKEY_ID
+
+# Re-import from backup
+gpg --import /path/to/backup.gpg
+```
+
+### GPG Hanging
+
+If GPG commands hang:
+```bash
+# Kill hanging processes and restart agent
+pkill -9 gpg
+gpgconf --kill gpg-agent
+```
 
 ## Development
 

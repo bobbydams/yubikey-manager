@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/bobbydams/yubikey-manager/internal/executor"
 	"github.com/bobbydams/yubikey-manager/pkg/ui"
@@ -28,7 +29,39 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	// Check YubiKey presence
 	present, err := yubikeySvc.IsPresent(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to check YubiKey: %w", err)
+		// Error indicates YubiKey is present but has an issue
+		ui.LogError("%v", err)
+		fmt.Println()
+		
+		// Check if it's a "not supported" vs "not initialized" issue
+		errStr := err.Error()
+		if strings.Contains(errStr, "does not support OpenPGP") {
+			ui.LogWarning("This YubiKey model may not support OpenPGP functionality.")
+			fmt.Println()
+			ui.LogInfo("To check your YubiKey capabilities:")
+			fmt.Println("  - Install ykman: brew install ykman (macOS) or see https://github.com/Yubico/yubikey-manager")
+			fmt.Println("  - Run: ykman info")
+			fmt.Println()
+			ui.LogInfo("Supported YubiKey models for OpenPGP:")
+			fmt.Println("  - YubiKey 4 series and later")
+			fmt.Println("  - YubiKey 5 series")
+			fmt.Println("  - Some YubiKey NEO models")
+			fmt.Println()
+			return err
+		}
+		
+		// Otherwise, assume it needs initialization
+		ui.LogInfo("To initialize a blank YubiKey for OpenPGP:")
+		fmt.Println("  1. Run: gpg --card-edit")
+		fmt.Println("  2. Type: admin")
+		fmt.Println("  3. Type: factory-reset (WARNING: This will erase all data!)")
+		fmt.Println("  4. Type: yes to confirm")
+		fmt.Println("  5. Type: quit")
+		fmt.Println()
+		ui.LogInfo("Alternatively, if you have ykman installed:")
+		fmt.Println("  ykman openpgp reset")
+		fmt.Println()
+		return err
 	}
 	if !present {
 		ui.LogError("No YubiKey detected. Please insert a YubiKey and try again.")
@@ -125,18 +158,32 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if response == "q" {
+	// Empty response (just Enter) means continue, 'q' means quit
+	if strings.ToLower(strings.TrimSpace(response)) == "q" {
 		if err := removeMasterKey(ctx, gpgSvc, cfg.PrimaryKeyFingerprint); err != nil {
 			return fmt.Errorf("failed to remove master key: %w", err)
 		}
 		return nil
 	}
+	// Empty response means continue
 
 	if err := gpgSvc.EditKey(ctx, cfg.PrimaryKeyID); err != nil {
 		return fmt.Errorf("failed to edit key: %w", err)
 	}
 
 	// Move subkey to YubiKey
+	fmt.Println()
+	ui.LogWarning("IMPORTANT: Before moving the key to your YubiKey, UPDATE YOUR BACKUP!")
+	ui.LogWarning("'keytocard' MOVES the key (doesn't copy). Without a backup, the key")
+	ui.LogWarning("will be PERMANENTLY LOST if the YubiKey is factory reset or lost.")
+	fmt.Println()
+	ui.LogInfo("Create an updated backup now:")
+	fmt.Println("  gpg --export-secret-keys", cfg.PrimaryKeyID, "> master-key-backup-$(date +%Y%m%d).gpg")
+	fmt.Println()
+	if !ui.Confirm("Have you backed up your keys and are ready to proceed?") {
+		ui.LogInfo("Backup first, then run 'ykgpg move-subkey' to continue.")
+		return nil
+	}
 	fmt.Println()
 	ui.LogInfo("Now we'll move the new subkey to your YubiKey.")
 	fmt.Println()
@@ -148,7 +195,11 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	fmt.Println("4. Type: key N (where N is the number of the new subkey)")
 	fmt.Println("5. Type: keytocard")
 	fmt.Println("6. Select: (1) Signature key")
-	fmt.Println("7. Type: save")
+	fmt.Println("7. Enter your GPG key PASSPHRASE when prompted")
+	fmt.Println("8. Enter your YubiKey ADMIN PIN when prompted (default: 12345678)")
+	fmt.Println("9. Type: save")
+	fmt.Println()
+	ui.LogWarning("If 'save' says 'Key not changed', the Admin PIN was likely incorrect.")
 	fmt.Println()
 
 	_, err = ui.Prompt("Press Enter when ready to continue: ")

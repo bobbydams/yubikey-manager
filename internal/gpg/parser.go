@@ -18,7 +18,9 @@ func parseKeyList(output []byte) []Key {
 		}
 
 		// Primary key: sec   rsa4096/ABC123DEF4567890 2023-01-01 [SC] [expires: 2028-01-01]
+		// Primary key on card: sec#  ed25519/ABC123... 2023-01-01 [SC] [expires: 2028-01-01]
 		// Subkey:      ssb   ed25519/ABC123... 2023-01-01 [S] [expires: 2028-01-01]
+		// Subkey on card: ssb>  ed25519/ABC123... 2023-01-01 [S] [expires: 2028-01-01]
 		// Card:         card-no: 0006 12345678
 		if strings.HasPrefix(line, "sec") || strings.HasPrefix(line, "ssb") {
 			key := parseKeyLine(line)
@@ -41,7 +43,9 @@ func parseKeyLine(line string) Key {
 	key := Key{}
 
 	// Match: sec/ssb   algo/keyid   date   [capabilities] [expires: date]
-	re := regexp.MustCompile(`^(sec|ssb)\s+(\S+)/(\S+)\s+(\S+)\s+\[([^\]]+)\](?:\s+\[expires:\s+([^\]]+)\])?`)
+	// Also handles: sec# (key on card, not available), ssb> (subkey on card)
+	// The # and > are optional suffixes indicating card status
+	re := regexp.MustCompile(`^(sec|ssb)[#>]?\s+(\S+)/(\S+)\s+(\S+)\s+\[([^\]]+)\](?:\s+\[expires:\s+([^\]]+)\])?`)
 	matches := re.FindStringSubmatch(line)
 
 	if len(matches) >= 6 {
@@ -77,7 +81,8 @@ func parseCapabilities(caps string) []string {
 // parseCardStatus parses the output of `gpg --card-status`.
 func parseCardStatus(output []byte) *CardInfo {
 	info := &CardInfo{
-		Keys: make(map[string]string),
+		Keys:          make(map[string]string),
+		KeyAttributes: []string{},
 	}
 
 	lines := strings.Split(string(output), "\n")
@@ -103,9 +108,19 @@ func parseCardStatus(output []byte) *CardInfo {
 			}
 		}
 
+		// Key attributes ...: rsa2048 rsa2048 rsa2048
+		// or: Key attributes ...: ed25519 cv25519 ed25519
+		if strings.HasPrefix(line, "Key attributes") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				attrs := strings.Fields(strings.TrimSpace(parts[1]))
+				info.KeyAttributes = attrs
+			}
+		}
+
 		// Signature key....: ABC123... (note the dots for alignment)
 		// Match lines like "Signature key.....: ABC123" or "Encryption key....: DEF456"
-		if strings.Contains(line, "key") && strings.Contains(line, ":") {
+		if strings.Contains(line, "key") && strings.Contains(line, ":") && !strings.HasPrefix(line, "Key attributes") {
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) == 2 {
 				// Extract key type (e.g., "Signature key....." -> "Signature")

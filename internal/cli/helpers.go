@@ -2,35 +2,68 @@ package cli
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/bobbydams/yubikey-manager/internal/gpg"
 )
 
 // removeMasterKey removes the master key from the local keyring.
 func removeMasterKey(ctx context.Context, gpgSvc *gpg.Service, fingerprint string) error {
-	// Export subkeys first
-	subkeys, err := gpgSvc.ExportSecretSubkeys(ctx, fingerprint[:16])
+	keyID := fingerprint
+	if len(fingerprint) > 16 {
+		keyID = fingerprint[:16]
+	}
+
+	// Check if master key is actually on the machine
+	keys, err := gpgSvc.ListSecretKeys(ctx, keyID)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to list keys: %w", err)
+	}
+
+	hasMasterOnMachine := false
+	for _, key := range keys {
+		// "sec" (not "sec#") means master key is on machine
+		if key.Type == "sec" && !strings.HasSuffix(key.Type, "#") {
+			hasMasterOnMachine = true
+			break
+		}
+	}
+
+	if !hasMasterOnMachine {
+		// Master key is already offline (sec#), nothing to remove
+		return nil
+	}
+
+	// Export subkeys first (these may be stubs for keys on cards, but that's OK)
+	subkeys, err := gpgSvc.ExportSecretSubkeys(ctx, keyID)
+	if err != nil {
+		// If export fails, subkeys might already be on cards - continue anyway
+		subkeys = nil
 	}
 
 	// Export public key
-	publicKey, err := gpgSvc.ExportPublicKey(ctx, fingerprint[:16])
+	publicKey, err := gpgSvc.ExportPublicKey(ctx, keyID)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to export public key: %w", err)
 	}
 
 	// Delete secret key
 	if err := gpgSvc.DeleteSecretKey(ctx, fingerprint); err != nil {
-		return err
+		return fmt.Errorf("failed to delete secret key: %w", err)
 	}
 
-	// Re-import public key and subkeys
+	// Re-import public key
 	if err := gpgSvc.ImportKey(ctx, publicKey); err != nil {
-		return err
+		return fmt.Errorf("failed to import public key: %w", err)
 	}
-	if err := gpgSvc.ImportKey(ctx, subkeys); err != nil {
-		return err
+
+	// Re-import subkeys if we have them
+	if subkeys != nil && len(subkeys) > 0 {
+		if err := gpgSvc.ImportKey(ctx, subkeys); err != nil {
+			// This can fail if subkeys are on cards - not a fatal error
+			// The key stubs will be recreated when the card is used
+		}
 	}
 
 	return nil

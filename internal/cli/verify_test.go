@@ -11,6 +11,7 @@ func TestNewVerifyCmd(t *testing.T) {
 	assert.NotNil(t, cmd)
 	assert.Equal(t, "verify", cmd.Use)
 	assert.Contains(t, cmd.Aliases, "check")
+	assert.True(t, cmd.SilenceUsage, "verify command should silence usage on errors")
 }
 
 func TestGetGitConfig(t *testing.T) {

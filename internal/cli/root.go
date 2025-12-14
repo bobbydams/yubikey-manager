@@ -32,8 +32,9 @@ func SetVersion(v string) {
 
 func init() {
 	rootCmd = &cobra.Command{
-		Use:   "ykgpg",
-		Short: "YubiKey GPG Manager - Manage GPG signing subkeys across multiple YubiKeys",
+		Use:          "ykgpg",
+		Short:        "YubiKey GPG Manager - Manage GPG signing subkeys across multiple YubiKeys",
+		SilenceUsage: true, // Don't print usage on errors
 		Long: `YubiKey GPG Manager is a tool for managing GPG signing subkeys across multiple YubiKeys.
 
 It provides commands for:
@@ -91,8 +92,10 @@ It provides commands for:
 
 	// Add subcommands
 	rootCmd.AddCommand(newStatusCmd())
+	rootCmd.AddCommand(newInitCmd())
 	rootCmd.AddCommand(newSetupCmd())
 	rootCmd.AddCommand(newSetupBatchCmd())
+	rootCmd.AddCommand(newMoveSubkeyCmd())
 	rootCmd.AddCommand(newRevokeCmd())
 	rootCmd.AddCommand(newExtendCmd())
 	rootCmd.AddCommand(newCleanupCmd())

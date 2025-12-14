@@ -64,6 +64,20 @@ func TestParseKeyLine(t *testing.T) {
 			expectedKeyID: "ABC123DEF456",
 			hasExpires:    false,
 		},
+		{
+			name:          "primary key on card (sec#)",
+			input:         "sec#  ed25519/07AAA1E535650AF5 2025-09-05 [SC] [expires: 2030-09-04]",
+			expectedType:  "sec",
+			expectedKeyID: "07AAA1E535650AF5",
+			hasExpires:    true,
+		},
+		{
+			name:          "subkey on card (ssb>)",
+			input:         "ssb>  ed25519/DC47D1B090A51498 2025-09-05 [S] [expires: 2030-09-04]",
+			expectedType:  "ssb",
+			expectedKeyID: "DC47D1B090A51498",
+			hasExpires:    true,
+		},
 	}
 
 	for _, tt := range tests {

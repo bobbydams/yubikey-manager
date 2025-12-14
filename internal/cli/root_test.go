@@ -74,7 +74,7 @@ func TestRootCmdInitialization(t *testing.T) {
 	// Test that all subcommands are added
 	subcommands := rootCmd.Commands()
 	expectedCommands := []string{
-		"status", "setup", "setup-batch", "revoke", "extend",
+		"status", "setup", "setup-batch", "move-subkey", "revoke", "extend",
 		"cleanup", "set-metadata", "export", "verify", "config",
 	}
 

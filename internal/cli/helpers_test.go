@@ -132,44 +132,89 @@ func TestRemoveMasterKey(t *testing.T) {
 	// This is a complex function that requires real GPG operations
 	// We'll test the error handling paths with mocked services
 	ctx := context.Background()
+	keyID := "ABC123DEF4567890"
+	shortKeyID := keyID[:16]
 
-	t.Run("error on export subkeys", func(t *testing.T) {
+	// Mock output for ListSecretKeys showing master key IS on machine (type "sec", not "sec#")
+	// Format: gpg --list-secret-keys --keyid-format=long KEYID
+	masterKeyOnMachineOutput := `sec   ed25519/ABC123DEF4567890 2025-09-05 [SC] [expires: 2030-09-04]
+      Key fingerprint = FA57 C851 31F1 1B28 EE23  6A4F ABC1 23DE F456 7890
+uid                 [ultimate] Test User <test@example.com>
+ssb   cv25519/1234567890ABCDEF 2025-09-05 [E] [expires: 2030-09-04]
+`
+	// Mock output for ListSecretKeys showing master key is OFFLINE (type "sec#")
+	masterKeyOfflineOutput := `sec#  ed25519/ABC123DEF4567890 2025-09-05 [SC] [expires: 2030-09-04]
+      Key fingerprint = FA57 C851 31F1 1B28 EE23  6A4F ABC1 23DE F456 7890
+uid                 [ultimate] Test User <test@example.com>
+ssb>  cv25519/1234567890ABCDEF 2025-09-05 [E] [expires: 2030-09-04]
+`
+
+	t.Run("master key already offline - returns success", func(t *testing.T) {
 		mockExecutor := executor.NewMockExecutor()
-		// ExportSecretSubkeys calls: gpg --export-secret-subkeys KEYID (no --armor)
-		keyID := "ABC123DEF4567890"[:16] // First 16 chars
-		mockExecutor.SetError("gpg --export-secret-subkeys "+keyID, fmt.Errorf("export failed"))
+		mockExecutor.SetOutput("gpg --list-secret-keys --keyid-format=long "+shortKeyID, []byte(masterKeyOfflineOutput))
 		gpgSvc := gpg.NewService(mockExecutor)
 
-		err := removeMasterKey(ctx, gpgSvc, "ABC123DEF4567890")
+		err := removeMasterKey(ctx, gpgSvc, keyID)
+		assert.NoError(t, err) // Should succeed without doing anything
+	})
+
+	t.Run("error on list secret keys", func(t *testing.T) {
+		mockExecutor := executor.NewMockExecutor()
+		mockExecutor.SetError("gpg --list-secret-keys --keyid-format=long "+shortKeyID, fmt.Errorf("list failed"))
+		gpgSvc := gpg.NewService(mockExecutor)
+
+		err := removeMasterKey(ctx, gpgSvc, keyID)
 		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to list keys")
 	})
 
 	t.Run("error on export public key", func(t *testing.T) {
 		mockExecutor := executor.NewMockExecutor()
-		keyID := "ABC123DEF4567890"[:16]
-		// First call (ExportSecretSubkeys) succeeds
-		mockExecutor.SetOutput("gpg --export-secret-subkeys "+keyID, []byte("subkey data"))
-		// Second call (ExportPublicKey) fails - uses --export --armor KEYID
-		mockExecutor.SetError("gpg --export --armor "+keyID, fmt.Errorf("export public key failed"))
+		// ListSecretKeys succeeds - master key is on machine
+		mockExecutor.SetOutput("gpg --list-secret-keys --keyid-format=long "+shortKeyID, []byte(masterKeyOnMachineOutput))
+		// ExportSecretSubkeys can fail (we handle this gracefully)
+		mockExecutor.SetError("gpg --export-secret-subkeys "+shortKeyID, fmt.Errorf("export subkeys failed"))
+		// ExportPublicKey fails
+		mockExecutor.SetError("gpg --export --armor "+shortKeyID, fmt.Errorf("export public key failed"))
 		gpgSvc := gpg.NewService(mockExecutor)
 
-		err := removeMasterKey(ctx, gpgSvc, "ABC123DEF4567890")
+		err := removeMasterKey(ctx, gpgSvc, keyID)
 		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to export public key")
 	})
 
 	t.Run("error on delete secret key", func(t *testing.T) {
 		mockExecutor := executor.NewMockExecutor()
-		keyID := "ABC123DEF4567890"[:16]
-		fullFingerprint := "ABC123DEF4567890"
-		// Export calls succeed
-		mockExecutor.SetOutput("gpg --armor --export-secret-subkeys "+keyID, []byte("subkey data"))
-		mockExecutor.SetOutput("gpg --armor --export "+keyID, []byte("public key data"))
+		// ListSecretKeys succeeds - master key is on machine
+		mockExecutor.SetOutput("gpg --list-secret-keys --keyid-format=long "+shortKeyID, []byte(masterKeyOnMachineOutput))
+		// ExportSecretSubkeys succeeds
+		mockExecutor.SetOutput("gpg --export-secret-subkeys "+shortKeyID, []byte("subkey data"))
+		// ExportPublicKey succeeds
+		mockExecutor.SetOutput("gpg --export --armor "+shortKeyID, []byte("public key data"))
 		// Delete fails
-		mockExecutor.SetError("gpg --batch --yes --delete-secret-keys "+fullFingerprint, fmt.Errorf("delete failed"))
+		mockExecutor.SetError("gpg --batch --yes --delete-secret-keys "+keyID, fmt.Errorf("delete failed"))
 		gpgSvc := gpg.NewService(mockExecutor)
 
-		err := removeMasterKey(ctx, gpgSvc, "ABC123DEF4567890")
-		// The error should be returned
+		err := removeMasterKey(ctx, gpgSvc, keyID)
 		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to delete secret key")
+	})
+
+	t.Run("success - full removal flow", func(t *testing.T) {
+		mockExecutor := executor.NewMockExecutor()
+		// ListSecretKeys succeeds - master key is on machine
+		mockExecutor.SetOutput("gpg --list-secret-keys --keyid-format=long "+shortKeyID, []byte(masterKeyOnMachineOutput))
+		// ExportSecretSubkeys succeeds
+		mockExecutor.SetOutput("gpg --export-secret-subkeys "+shortKeyID, []byte("subkey data"))
+		// ExportPublicKey succeeds
+		mockExecutor.SetOutput("gpg --export --armor "+shortKeyID, []byte("public key data"))
+		// Delete succeeds
+		mockExecutor.SetOutput("gpg --batch --yes --delete-secret-keys "+keyID, []byte(""))
+		// Import public key succeeds
+		mockExecutor.SetOutput("gpg --import", []byte(""))
+		gpgSvc := gpg.NewService(mockExecutor)
+
+		err := removeMasterKey(ctx, gpgSvc, keyID)
+		assert.NoError(t, err)
 	})
 }

@@ -37,6 +37,19 @@ card-no: 0006 12345678
 			expectedKeys:  0,
 			expectedError: false,
 		},
+		{
+			name:  "keys on card (sec# and ssb>)",
+			keyID: "07AAA1E535650AF5",
+			mockOutput: `sec#  ed25519/07AAA1E535650AF5 2025-09-05 [SC] [expires: 2030-09-04]
+      FA57C85131F11B28EE236A4F07AAA1E535650AF5
+uid                 [ultimate] Test User <test@example.com>
+ssb>  cv25519/116DB85718F8B287 2025-09-05 [E] [expires: 2030-09-04]
+ssb>  ed25519/DC47D1B090A51498 2025-09-05 [S] [expires: 2030-09-04]
+ssb>  ed25519/0257F6B8152D7F35 2025-09-05 [A] [expires: 2030-09-04]
+`,
+			expectedKeys:  4,
+			expectedError: false,
+		},
 	}
 
 	for _, tt := range tests {

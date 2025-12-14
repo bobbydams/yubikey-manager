@@ -2,6 +2,7 @@ package yubikey
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/bobbydams/yubikey-manager/internal/executor"
@@ -59,16 +60,34 @@ func TestService_IsPresent(t *testing.T) {
 		name          string
 		cardStatusErr error
 		expected      bool
+		expectError   bool
+		errorContains string
 	}{
 		{
 			name:          "yubikey present",
 			cardStatusErr: nil,
 			expected:      true,
+			expectError:   false,
 		},
 		{
 			name:          "yubikey not present",
 			cardStatusErr: assert.AnError,
 			expected:      false,
+			expectError:   false,
+		},
+		{
+			name:          "yubikey present but not initialized",
+			cardStatusErr: fmt.Errorf("gpg: selecting card failed: Operation not supported by device"),
+			expected:      false,
+			expectError:   true,
+			errorContains: "not initialized for OpenPGP",
+		},
+		{
+			name:          "yubikey present but OpenPGP card not available",
+			cardStatusErr: fmt.Errorf("gpg: OpenPGP card not available: Operation not supported by device"),
+			expected:      false,
+			expectError:   true,
+			errorContains: "not initialized for OpenPGP",
 		},
 	}
 
@@ -87,7 +106,14 @@ func TestService_IsPresent(t *testing.T) {
 
 			present, err := svc.IsPresent(context.Background())
 
-			require.NoError(t, err)
+			if tt.expectError {
+				require.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				require.NoError(t, err)
+			}
 			assert.Equal(t, tt.expected, present)
 		})
 	}
@@ -114,4 +140,81 @@ func TestService_GetCardInfo(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, expectedCardInfo, cardInfo)
+}
+
+func TestService_SupportsOpenPGP(t *testing.T) {
+	tests := []struct {
+		name           string
+		ykmanOutput    string
+		ykmanError     error
+		cardStatusErr  error
+		expected       bool
+		expectError    bool
+		errorContains  string
+	}{
+		{
+			name:        "ykman shows OpenPGP support",
+			ykmanOutput: "Device type: YubiKey 5\nApplications:\n  OpenPGP: Enabled",
+			ykmanError:  nil,
+			expected:    true,
+			expectError: false,
+		},
+		{
+			name:        "ykman shows OpenPGP not available",
+			ykmanOutput: "Device type: Security Key C NFC\nApplications:\n  OpenPGP: Not available",
+			ykmanError:  nil,
+			expected:    false,
+			expectError: false,
+		},
+		{
+			name:        "ykman not available, GPG card status works",
+			ykmanError:  fmt.Errorf("ykman not found"),
+			cardStatusErr: nil,
+			expected:    true,
+			expectError: false,
+		},
+		{
+			name:        "ykman not available, GPG fails with operation not supported",
+			ykmanError:  fmt.Errorf("ykman not found"),
+			cardStatusErr: fmt.Errorf("gpg: selecting card failed: Operation not supported by device"),
+			expected:    false,
+			expectError: true,
+			errorContains: "unable to determine",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockGPG := &MockGPGService{
+				CardStatusFunc: func(ctx context.Context) (*gpg.CardInfo, error) {
+					if tt.cardStatusErr != nil {
+						return nil, tt.cardStatusErr
+					}
+					return &gpg.CardInfo{Serial: "12345678"}, nil
+				},
+			}
+			mockExec := executor.NewMockExecutor()
+			
+			// Set up ykman mock
+			if tt.ykmanError != nil {
+				mockExec.SetError("ykman info", tt.ykmanError)
+			} else {
+				mockExec.SetOutput("ykman info", []byte(tt.ykmanOutput))
+			}
+			
+			svc := NewService(mockGPG, mockExec)
+
+			supports, err := svc.SupportsOpenPGP(context.Background())
+
+			if tt.expectError {
+				require.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.expected, supports)
+		})
+	}
 }

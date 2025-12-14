@@ -44,7 +44,17 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	for _, key := range keys {
 		ui.PrintKey(key.Type + " ")
 		ui.PrintKey(key.KeyID)
-		fmt.Printf(" [%v]", key.Capabilities)
+		// Format capabilities as [S C E A] instead of [S C E A]
+		if len(key.Capabilities) > 0 {
+			capStr := ""
+			for i, cap := range key.Capabilities {
+				if i > 0 {
+					capStr += " "
+				}
+				capStr += cap
+			}
+			fmt.Printf(" [%s]", capStr)
+		}
 		if key.Expires != "" {
 			fmt.Printf(" expires: ")
 			ui.PrintValue(key.Expires)

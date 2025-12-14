@@ -50,9 +50,10 @@ type Key struct {
 
 // CardInfo contains information about a YubiKey card.
 type CardInfo struct {
-	Serial     string
-	Cardholder string
-	Keys       map[string]string // "Signature key", "Encryption key", "Authentication key" -> key ID
+	Serial        string
+	Cardholder    string
+	Keys          map[string]string   // "Signature", "Encryption", "Authentication" -> key ID
+	KeyAttributes []string            // Key types for each slot, e.g., ["rsa2048", "rsa2048", "rsa2048"]
 }
 
 // Service implements GPGService using an executor.
